@@ -1,0 +1,37 @@
+{
+  "name": "mcbook",
+  "version": "0.1.0",
+  "description": "OpenClaw + Mineflayer Minecraft 多智能体系统",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "bot": "tsx src/index.ts",
+    "mcp": "tsx src/mcp/server.ts",
+    "dashboard": "node dashboard/server.js",
+    "test:mcp": "tsx scripts/test-mcp-client.ts",
+    "test:move": "tsx scripts/test-move.ts",
+    "test:mine": "tsx scripts/test-mine.ts",
+    "test:cognitive": "tsx scripts/test-cognitive.ts",
+    "game-master": "tsx scripts/game-master.ts",
+    "heartbeat-client": "tsx scripts/heartbeat-client.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "mineflayer": "^4.35.0",
+    "mineflayer-collectblock": "^1.6.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "mineflayer-tool": "^1.2.0",
+    "ws": "^8.19.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "overrides": {
+    "axios": "^1.7.4"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "intervalMs": 8000,
+  "idleIntervalMs": 30000,
+  "httpPort": 3848,
+  "memoryDir": "memory",
+  "allowInterruptOnThreat": true,
+  "cognitiveCycleMs": 180000,
+  "observeIntervalMs": 8000,
+  "urgentHealthThreshold": 6,
+  "bots": [
+    {
+      "name": "Bot_1",
+      "mcBotName": "MCBook_Bot_1",
+      "mcporterServer": "minecraft-mcp",
+      "openclawAgent": "main"
+    }
+  ]
+}
