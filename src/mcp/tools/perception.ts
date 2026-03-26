@@ -145,27 +145,32 @@ export function getScan(bot: Bot, radius = 32): string[] {
  * 按类型聚合，避免逐个方块输出导致数据量爆炸
  * 例: "oak_log x5：最近在【正前方 3格】" 而非 5 行独立描述
  */
-export function getScanBlocks(bot: Bot, radius = 8): string[] {
+export function getScanBlocks(bot: Bot, radius = 16): string[] {
   if (!bot.entity) return [];
   const pos = bot.entity.position.floored();
 
-  // 按方块类型聚合：记录数量和最近的一个
-  const aggregated = new Map<string, { count: number; nearestDir: string; nearestDist: number }>();
+  // 按方块类型聚合：记录数量和最近的一个（含坐标）
+  const aggregated = new Map<string, { count: number; nearestDir: string; nearestDist: number; nearestPos: { x: number; y: number; z: number } }>();
 
+  // y 范围扩大：树木可达 7+ 格高，矿物可在脚下更深处
+  const yMin = -4;
+  const yMax = Math.min(8, 319 - pos.y); // 不超过世界高度
   for (let x = -radius; x <= radius; x++) {
-    for (let y = -2; y <= 3; y++) {
+    for (let y = yMin; y <= yMax; y++) {
       for (let z = -radius; z <= radius; z++) {
         const block = bot.blockAt(pos.offset(x, y, z));
         if (!block || block.name === 'air' || block.name.includes('air')) continue;
         if (!isWhitelistBlock(block.name)) continue;
 
         const { direction, distance } = toRelativeDirection(bot, x, y, z);
+        const absPos = { x: pos.x + x, y: pos.y + y, z: pos.z + z };
         const existing = aggregated.get(block.name);
         if (!existing || distance < existing.nearestDist) {
           aggregated.set(block.name, {
             count: (existing?.count ?? 0) + 1,
             nearestDir: direction,
             nearestDist: distance,
+            nearestPos: absPos,
           });
         } else {
           existing.count++;
@@ -176,7 +181,8 @@ export function getScanBlocks(bot: Bot, radius = 8): string[] {
 
   const results: string[] = [];
   for (const [name, info] of aggregated) {
-    results.push(`${name} x${info.count}：最近在【${info.nearestDir} ${info.nearestDist}格】`);
+    const p = info.nearestPos;
+    results.push(`${name} x${info.count}：最近在【${info.nearestDir} ${info.nearestDist}格】坐标(${p.x},${p.y},${p.z})`);
   }
   return results;
 }
@@ -246,6 +252,39 @@ export function getSurroundingBlocksGrid(bot: Bot, size = 5): string {
   return `俯视网格 (${size}x${size}, @=自己, T=树, W=水, S=石头, G=草):\n${lines.join('\n')}`;
 }
 
+/**
+ * 定向搜索指定方块类型（长距离，最大 64 格）
+ * 返回最近的几个匹配方块的精确坐标
+ * mcData 由调用方传入（避免 ESM 下 require 问题）
+ */
+export function findBlocks(bot: Bot, blockType: string, maxDistance = 64, count = 5, mcData?: Record<string, any>): string[] {
+  if (!bot.entity) return [];
+
+  if (!mcData) return [`需要传入 mcData`];
+
+  const blockId = mcData.blocksByName[blockType]?.id;
+  if (blockId === undefined) return [`未知方块类型: ${blockType}`];
+
+  const blocks = bot.findBlocks({
+    matching: blockId,
+    maxDistance,
+    count,
+  });
+
+  if (blocks.length === 0) return [`${maxDistance}格内未找到 ${blockType}`];
+
+  const pos = bot.entity.position;
+  const results: string[] = [];
+  for (const b of blocks) {
+    const dist = Math.round(Math.sqrt(
+      (b.x - pos.x) ** 2 + (b.y - pos.y) ** 2 + (b.z - pos.z) ** 2
+    ));
+    const { direction } = toRelativeDirection(bot, b.x - pos.x, b.y - pos.y, b.z - pos.z);
+    results.push(`${blockType} 在 (${b.x},${b.y},${b.z}) 距离${dist}格【${direction}】`);
+  }
+  return results;
+}
+
 export const perceptionToolSchemas = {
   get_surrounding_blocks: {
     description: '查看周围方块/地形。这是观察环境的主要方式。format: relative=相对方位文字描述(默认)，grid=ASCII俯视地图',
@@ -286,5 +325,13 @@ export const perceptionToolSchemas = {
   get_status: {
     description: '获取综合状态：血量、饥饿度、坐标、背包、时间、是否正在执行动作(isBusy)。一次获取所有信息。',
     inputSchema: {},
+  },
+  find_blocks: {
+    description: '搜索指定类型的方块，返回最近几个的精确坐标。用于寻找树木(oak_log)、矿物(coal_ore/iron_ore)等资源的位置。搜索范围最大64格。',
+    inputSchema: {
+      block_type: z.string().describe('方块类型名，如 oak_log, birch_log, coal_ore, iron_ore, diamond_ore, stone, crafting_table'),
+      max_distance: z.number().optional().describe('最大搜索距离(格)，默认64'),
+      count: z.number().optional().describe('返回数量，默认5'),
+    },
   },
 };

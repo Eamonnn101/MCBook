@@ -11,14 +11,16 @@
  */
 
 export type ObservationCategory =
-  | 'health_change'    // 血量/饥饿度变化
-  | 'combat'           // 战斗相关（受伤、敌对生物）
-  | 'chat'             // 聊天消息
-  | 'environment'      // 环境变化（扫描结果、日夜）
-  | 'death'            // 死亡
-  | 'spawn'            // 重生
-  | 'action_result'    // 本地规则执行结果
-  | 'state_snapshot';  // 定时状态快照
+  | 'health_change'       // 血量/饥饿度变化
+  | 'combat'              // 战斗相关（受伤、敌对生物）
+  | 'chat'                // 聊天消息
+  | 'environment'         // 环境变化（扫描结果、日夜）
+  | 'death'               // 死亡
+  | 'spawn'               // 重生
+  | 'action_result'       // 本地规则执行结果
+  | 'state_snapshot'      // 定时状态快照
+  | 'habit_execution'     // 习惯层技能执行
+  | 'critic_evaluation';  // Critic 评估结果
 
 export interface Observation {
   ts: number;
@@ -32,8 +34,8 @@ export class MemoryStream {
   private observations: Observation[] = [];
   private readonly maxSize: number;
 
-  /** 上一次思考阶段的时间（初始为 0，确保首次观察都被包含） */
-  lastThinkTime: number = 0;
+  /** 上一次思考阶段的时间（初始为当前时间，避免 elapsed 计算溢出） */
+  lastThinkTime: number = Date.now();
 
   /** 上一次状态快照（用于增量比较） */
   private lastSnapshot: Record<string, unknown> = {};

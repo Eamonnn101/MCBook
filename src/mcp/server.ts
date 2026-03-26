@@ -11,6 +11,7 @@ import {
   getSurroundingBlocksGrid,
   getScan,
   getScanBlocks,
+  findBlocks,
   perceptionToolSchemas,
 } from './tools/perception.js';
 import {
@@ -21,6 +22,9 @@ import {
   executeEquip,
   executeAttack,
   executeEat,
+  executePlace,
+  executeFollowPlayer,
+  executeStopFollow,
   getMcData,
 } from './tools/action.js';
 import { getActionLock } from '../bot/actionLock.js';
@@ -234,7 +238,7 @@ function registerPerceptionTools() {
       const radius = args.radius ?? 32;
       const includeBlocks = args.include_blocks !== false;
       const entities = getScan(b, radius);
-      const blocks = includeBlocks ? getScanBlocks(b, Math.min(radius, 8)) : [];
+      const blocks = includeBlocks ? getScanBlocks(b, Math.min(radius, 32)) : [];
       const lines = [...entities, ...blocks];
       return { content: [{ type: 'text' as const, text: lines.length ? lines.join('\n') : '视野内无玩家、敌对生物或重要资源' }] };
     }
@@ -265,6 +269,21 @@ function registerPerceptionTools() {
         currentAction,
       };
       return { content: [{ type: 'text' as const, text: JSON.stringify(status, null, 0) }] };
+    }
+  );
+  mcpServer.registerTool(
+    'find_blocks',
+    {
+      description: perceptionToolSchemas.find_blocks.description,
+      inputSchema: perceptionToolSchemas.find_blocks.inputSchema,
+    },
+    async (args: { block_type: string; max_distance?: number; count?: number }) => {
+      writeLog({ ts: Date.now(), type: 'perception', tool: 'find_blocks', args });
+      const b = await ensureBotWithEntity();
+      if (!b.entity) return { content: [{ type: 'text' as const, text: 'Bot 尚未完全加载' }] };
+      const mcData = await getMcData(b.version);
+      const results = findBlocks(b, args.block_type, args.max_distance ?? 64, args.count ?? 5, mcData);
+      return { content: [{ type: 'text' as const, text: results.join('\n') || `未找到 ${args.block_type}` }] };
     }
   );
 }
@@ -386,12 +405,89 @@ function registerActionTools() {
         const item = mcData.itemsByName[args.item_name];
         if (!item) return { content: [{ type: 'text' as const, text: `未知物品: ${args.item_name}` }] };
 
-        const recipe = b.recipesFor(item.id, null, 1, null)[0];
-        if (!recipe) return { content: [{ type: 'text' as const, text: `无合成配方: ${args.item_name}` }] };
+        // Auto-find nearby crafting table for 3x3 recipes
+        const craftingTableId = mcData.blocksByName['crafting_table']?.id;
+        const craftingTable = craftingTableId != null
+          ? b.findBlock({ matching: craftingTableId, maxDistance: 4 })
+          : null;
 
-        await b.craft(recipe, args.count ?? 1, undefined);
+        // Debug: log inventory and recipe lookup
+        const invItems = b.inventory.items().map(i => `${i.name}x${i.count}`).join(', ') || 'empty';
+        console.log(`[craft debug] item=${args.item_name} id=${item.id} inv=[${invItems}] craftingTable=${!!craftingTable}`);
+
+        // Try with crafting table first, then without (for 2x2 recipes like planks)
+        let recipe = craftingTable
+          ? b.recipesFor(item.id, null, 1, craftingTable)[0]
+          : null;
+        let usedTable = craftingTable;
+        if (!recipe) {
+          const allRecipes = b.recipesFor(item.id, null, 1, null);
+          console.log(`[craft debug] recipesFor(${item.id}, null, 1, null) => ${allRecipes.length} recipes`);
+          recipe = allRecipes[0];
+          usedTable = null;
+        }
+        if (!recipe) {
+          // Also try without minCount restriction
+          const anyRecipes = b.recipesFor(item.id, null, 0, null);
+          console.log(`[craft debug] recipesFor(${item.id}) [no filter] => ${anyRecipes.length} recipes`);
+          if (anyRecipes.length > 0) {
+            recipe = anyRecipes[0];
+            usedTable = null;
+          }
+        }
+        if (!recipe) return { content: [{ type: 'text' as const, text: `无合成配方: ${args.item_name}（如需工作台请先放置在附近）` }] };
+
+        await b.craft(recipe, args.count ?? 1, usedTable ?? undefined);
         return { content: [{ type: 'text' as const, text: `已合成 ${args.item_name} x${args.count ?? 1}` }] };
       } catch (err) { return errorText('craft', err); }
+    }
+  );
+
+  mcpServer.registerTool(
+    'place',
+    {
+      description: actionToolSchemas.place.description,
+      inputSchema: actionToolSchemas.place.inputSchema,
+    },
+    async (args: { block_name: string; x: number; y: number; z: number }) => {
+      writeLog({ ts: Date.now(), type: 'action', tool: 'place', args });
+      try {
+        const b = await ensureBotWithEntity();
+        const msg = await executePlace(b, args);
+        return { content: [{ type: 'text' as const, text: msg }] };
+      } catch (err) { return errorText('place', err); }
+    }
+  );
+
+  mcpServer.registerTool(
+    'follow_player',
+    {
+      description: actionToolSchemas.follow_player.description,
+      inputSchema: actionToolSchemas.follow_player.inputSchema,
+    },
+    async (args: { player_name: string; duration?: number; distance?: number }) => {
+      writeLog({ ts: Date.now(), type: 'action', tool: 'follow_player', args });
+      try {
+        const b = await ensureBotWithEntity();
+        const msg = await executeFollowPlayer(b, args);
+        return { content: [{ type: 'text' as const, text: msg }] };
+      } catch (err) { return errorText('follow_player', err); }
+    }
+  );
+
+  mcpServer.registerTool(
+    'stop_follow',
+    {
+      description: actionToolSchemas.stop_follow.description,
+      inputSchema: z.object({}),
+    },
+    async () => {
+      writeLog({ ts: Date.now(), type: 'action', tool: 'stop_follow', args: {} });
+      try {
+        const b = await ensureBotWithEntity();
+        const msg = await executeStopFollow(b);
+        return { content: [{ type: 'text' as const, text: msg }] };
+      } catch (err) { return errorText('stop_follow', err); }
     }
   );
 }

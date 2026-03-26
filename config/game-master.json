@@ -4,7 +4,7 @@
   "httpPort": 3848,
   "memoryDir": "memory",
   "allowInterruptOnThreat": true,
-  "cognitiveCycleMs": 180000,
+  "cognitiveCycleMs": 60000,
   "observeIntervalMs": 8000,
   "urgentHealthThreshold": 6,
   "bots": [
@@ -12,7 +12,15 @@
       "name": "Bot_1",
       "mcBotName": "MCBook_Bot_1",
       "mcporterServer": "minecraft-mcp",
-      "openclawAgent": "main"
+      "openclawAgent": "survivor",
+      "agentType": "survivor"
+    },
+    {
+      "name": "Bot_2",
+      "mcBotName": "MCBook_Bot_2",
+      "mcporterServer": "minecraft-mcp",
+      "openclawAgent": "architect",
+      "agentType": "architect"
     }
   ]
 }
