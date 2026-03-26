@@ -1,44 +1,64 @@
 # MCBook
 
-AI-driven Minecraft bot system inspired by [Stanford Generative Agents](https://arxiv.org/abs/2304.03442). Uses a **cognitive cycle** architecture — the AI "thinks" every 3 minutes instead of reacting to every event, reducing token usage by ~95%.
+AI-driven Minecraft multi-agent society inspired by [Stanford Generative Agents](https://arxiv.org/abs/2304.03442). Each bot runs in its own terminal with a unique personality, forming a distributed AI agent society that collaborates, trades, and survives together.
 
-Built with [Mineflayer](https://github.com/PrismarinJS/mineflayer) + [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) + [OpenClaw](https://github.com/anthropics/openclaw).
+Built with [Mineflayer](https://github.com/PrismarinJS/mineflayer) + [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) + LLM (Ollama / OpenClaw).
 
-## How It Works
-
-```
-┌─────────────────── Cognitive Cycle (3 min) ───────────────────┐
-│                                                                │
-│  [Observe]  8s poll → Memory Stream (zero token)               │
-│      ↓                                                         │
-│  [Think]    1 AI call → reflection + action plan (JSON)        │
-│      ↓                                                         │
-│  [Execute]  PlanExecutor runs steps via MCP (zero token)       │
-│      ↓                                                         │
-│  [Interrupt] death/low HP/attack → immediate think             │
-│                                                                │
-│  Old: 22 AI calls / 3 min     New: 1 AI call / 3 min          │
-└────────────────────────────────────────────────────────────────┘
-```
-
-### Architecture
+## Architecture
 
 ```
-Minecraft Server (Paper 1.21+)
-    ↕
-MCP Server (src/mcp/) ← owns the bot, exposes 15 tools
-    ↕
-Game Master (scripts/game-master.ts)
-    │  ├─ Memory Stream: accumulates observations
-    │  ├─ Cognitive Prompt: builds "think" prompt every 3 min
-    │  └─ PlanExecutor: runs AI's plan via MCP tools
-    ↕
-Heartbeat Client (scripts/heartbeat-client.ts)
-    │  ├─ Receives prompt from Game Master (WebSocket)
-    │  ├─ Sends to OpenClaw AI
-    │  └─ POSTs AI's JSON plan back to Game Master
-    ↕
-OpenClaw AI → outputs JSON plan only, never calls tools directly
+                    ┌──────────────────────────────┐
+                    │    Coordinator Server         │
+                    │    (shared state hub)         │
+                    │                               │
+                    │  AgentRegistry  EventBus      │
+                    │  TradeEngine    Waypoints      │
+                    │  Teams          Dashboard API  │
+                    └──────┬───────────┬────────────┘
+                      WS   │           │   WS
+               ┌───────────┘           └───────────┐
+               ▼                                   ▼
+    ┌─────────────────────┐           ┌─────────────────────┐
+    │   Bot Runner #1     │           │   Bot Runner #2     │
+    │   (Terminal 1)      │           │   (Terminal 2)      │
+    │                     │           │                     │
+    │  MCP Server + Bot   │           │  MCP Server + Bot   │
+    │  Cognitive Loop     │           │  Cognitive Loop     │
+    │  Memory Stream      │           │  Memory Stream      │
+    │  Personality: Surv. │           │  Personality: Arch. │
+    │  LLM (Ollama/OC)    │           │  LLM (Ollama/OC)    │
+    └─────────┬───────────┘           └─────────┬───────────┘
+              │                                 │
+              └──────────┐         ┌────────────┘
+                         ▼         ▼
+                  ┌─────────────────────┐
+                  │  Minecraft Server   │
+                  │  (Paper 1.21+)      │
+                  └─────────────────────┘
+```
+
+### Cognitive Cycle
+
+Each bot independently runs a cognitive loop:
+
+```
+┌─────────────── Cognitive Cycle ───────────────┐
+│                                                │
+│  [Observe]  8s poll → Memory Stream            │
+│      ↓                                         │
+│  [Think]    Fast (<3s) or Slow (3min) LLM call │
+│      ↓          ↳ Reflex / Habit / Deliberation│
+│  [Execute]  PlanExecutor runs steps via MCP    │
+│      ↓                                         │
+│  [Reflect]  Critic evaluates results           │
+│      ↓                                         │
+│  [Interrupt] death/low HP/chat → immediate     │
+│                                                │
+│  Three-tier reaction:                          │
+│    Reflex  (<50ms)  JS handlers, no LLM       │
+│    Habit   (<500ms) TF-IDF skill match         │
+│    Deliberation (1-5s) Full LLM planning       │
+└────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -46,14 +66,14 @@ OpenClaw AI → outputs JSON plan only, never calls tools directly
 ### Prerequisites
 
 - Node.js >= 20
-- Minecraft Java Edition server (Paper 1.21+ recommended)
-- OpenClaw CLI (`npm install -g openclaw`)
+- Minecraft Java Edition server (Paper 1.21+ recommended, `online-mode=false`)
+- LLM backend: [Ollama](https://ollama.ai/) (recommended) or OpenClaw
 
 ### 1. Install
 
 ```bash
-git clone https://github.com/yourname/mcbook.git
-cd mcbook
+git clone https://github.com/Eamonnn101/MCBook.git
+cd MCBook
 npm install
 ```
 
@@ -61,64 +81,40 @@ npm install
 
 Make sure your server is running on `localhost:25565`.
 
-### 3. Run
-
-Open two terminals:
+### 3. Run (Distributed Mode)
 
 ```bash
-# Terminal 1: Game Master (connects bot, runs cognitive cycle)
+# Terminal 1: Start Coordinator (shared state hub)
+npm run coordinator
+
+# Terminal 2: Start Bot #1
+npm run bot-runner -- --name Bot_1 --agent survivor --mc-name MCBook_Bot_1
+
+# Terminal 3: Start Bot #2
+npm run bot-runner -- --name Bot_2 --agent architect --mc-name MCBook_Bot_2
+
+# Optional: Dashboard
+npm run dashboard
+```
+
+Each bot will:
+1. Connect to the Minecraft server and Coordinator
+2. Observe the world every 8 seconds (zero token)
+3. Think using fast/slow cognitive cycle
+4. Execute plans step-by-step via MCP tools
+5. Share events, trade, and collaborate through Coordinator
+
+### 4. Single-Process Mode (Legacy)
+
+```bash
+# All bots in one process (v0.1 style)
 npm run game-master
 
-# Terminal 2: Heartbeat Client (bridges Game Master ↔ OpenClaw)
+# Bridge to OpenClaw
 npm run heartbeat-client
 ```
 
-The bot will:
-1. Connect to your Minecraft server
-2. Start observing the world every 8 seconds
-3. Every 3 minutes, send a "think" prompt to OpenClaw
-4. OpenClaw returns a JSON action plan
-5. PlanExecutor executes the plan step-by-step (mine, move, craft, etc.)
-6. Urgent events (damage, death, chat) trigger immediate thinking
-
-### 4. Manual Testing (without OpenClaw)
-
-You can POST a plan directly to test:
-
-```bash
-curl -X POST http://localhost:3848/plan \
-  -H "Content-Type: application/json" \
-  -d '{"bot":"Bot_1","plan":"{\"reflection\":\"safe area\",\"plan\":[{\"tool\":\"mine\",\"args\":{\"block_type\":\"oak_log\"},\"note\":\"chop tree\"}]}"}'
-```
-
 ## Configuration
-
-Edit `config/game-master.json`:
-
-```json
-{
-  "cognitiveCycleMs": 180000,
-  "observeIntervalMs": 8000,
-  "urgentHealthThreshold": 6,
-  "httpPort": 3848,
-  "memoryDir": "memory",
-  "bots": [
-    {
-      "name": "Bot_1",
-      "mcBotName": "MCBook_Bot_1",
-      "mcporterServer": "minecraft-mcp",
-      "openclawAgent": "main"
-    }
-  ]
-}
-```
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `cognitiveCycleMs` | `180000` (3 min) | How often the AI "thinks" |
-| `observeIntervalMs` | `8000` | How often to poll bot state (zero token) |
-| `urgentHealthThreshold` | `6` | HP below this triggers immediate think |
-| `httpPort` | `3848` | Game Master HTTP/WebSocket port |
 
 ### Environment Variables
 
@@ -127,8 +123,28 @@ Edit `config/game-master.json`:
 | `MC_BOT_HOST` | `localhost` | Minecraft server address |
 | `MC_BOT_PORT` | `25565` | Minecraft server port |
 | `MC_BOT_USERNAME` | `MCBook_Bot_1` | Bot username |
-| `MC_BOT_VERSION` | auto-detect | Minecraft version override |
-| `OPENCLAW_API_URL` | — | OpenClaw HTTP API (alternative to CLI) |
+| `MC_BOT_VERSION` | auto-detect | Minecraft version (e.g. `1.21.11`) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `OLLAMA_MODEL` | `minimax-m2.5:cloud` | Ollama model name |
+| `OPENCLAW_API_URL` | — | OpenClaw HTTP API (fallback) |
+
+### Bot Runner CLI
+
+```bash
+npx tsx scripts/bot-runner.ts \
+  --name Bot_1 \            # Agent name (used in Coordinator)
+  --agent survivor \         # Personality type
+  --mc-name MCBook_Bot_1 \   # Minecraft username
+  --coordinator ws://localhost:3849  # Coordinator WebSocket URL
+```
+
+### Coordinator CLI
+
+```bash
+npx tsx scripts/coordinator.ts \
+  --ws-port 3849 \     # WebSocket port for Bot Runners
+  --http-port 3848     # HTTP port for Dashboard/status
+```
 
 ## Project Structure
 
@@ -137,74 +153,103 @@ mcbook/
 ├── src/
 │   ├── bot/                    # Mineflayer bot management
 │   │   ├── createBot.ts        # Bot creation & plugin loading
-│   │   ├── localRules.ts       # Zero-token survival (auto-eat, auto-equip)
+│   │   ├── localRules.ts       # Zero-token survival (auto-eat, auto-equip, reflexes)
 │   │   ├── actionLock.ts       # Concurrency lock
-│   │   ├── pathfinder.ts       # Navigation with anti-stuck
+│   │   ├── pathfinder.ts       # Navigation with anti-stuck & pillar-up
 │   │   └── plugins.ts          # Mineflayer plugin loader
-│   ├── mcp/                    # MCP server (15 tools)
+│   ├── mcp/                    # MCP server (17 tools)
 │   │   ├── server.ts           # Tool registration & bot lifecycle
 │   │   ├── events.ts           # Event system (health/chat/combat/time)
 │   │   ├── tools/
-│   │   │   ├── perception.ts   # 8 sensing tools (scan, blocks, health...)
-│   │   │   └── action.ts       # 7 action tools (move, mine, craft...)
+│   │   │   ├── perception.ts   # Sensing tools (scan, blocks, health...)
+│   │   │   ├── action.ts       # Action tools (move, mine, craft, follow...)
+│   │   │   └── social.ts       # Social tools (chat, trade, team)
 │   │   ├── chatLog.ts          # Chat message buffer
 │   │   ├── stateSnapshot.ts    # Pre-death inventory capture
 │   │   └── deathReflection.ts  # Post-mortem learning
 │   ├── cognitive/              # Stanford Generative Agents system
 │   │   ├── memoryStream.ts     # Timestamped observation accumulator
-│   │   └── planExecutor.ts     # Executes AI's JSON plans via MCP
+│   │   ├── planExecutor.ts     # Executes AI's JSON plans (with JSON repair)
+│   │   ├── worldState.ts       # World state builder for prompts
+│   │   ├── critic.ts           # Post-execution evaluation
+│   │   └── habitTier.ts        # TF-IDF skill matching for fast reactions
+│   ├── skills/                 # Skill library system
+│   │   ├── skillLibrary.ts     # File-backed skill storage
+│   │   ├── skillGenerator.ts   # Generate skills from successful plans
+│   │   ├── skillRetrieval.ts   # TF-IDF skill retrieval
+│   │   └── skillExecutor.ts    # Execute stored skills
+│   ├── social/                 # Social systems
+│   │   ├── socialMemory.ts     # Per-agent relationship memory
+│   │   └── tradeEngine.ts      # Trade proposal/accept/reject
+│   ├── multi/                  # Distributed coordination
+│   │   ├── coordinatorServer.ts # WebSocket hub for shared state
+│   │   ├── coordinatorClient.ts # Client API for Bot Runners
+│   │   ├── agentRegistry.ts     # Agent registration & status
+│   │   └── eventBus.ts          # Inter-agent event routing
+│   ├── agents/
+│   │   └── personalityProfile.ts # Personality loader
 │   └── observer/
 │       └── logWriter.ts        # JSON-L log output
 ├── scripts/
-│   ├── game-master.ts          # Cognitive cycle scheduler + HTTP server
-│   ├── heartbeat-client.ts     # OpenClaw bridge (prompt → AI → plan)
-│   └── test-cognitive.ts       # Unit tests for cognitive system
+│   ├── coordinator.ts          # Coordinator entry point
+│   ├── bot-runner.ts           # Single-bot cognitive loop
+│   ├── game-master.ts          # Legacy multi-bot manager
+│   ├── heartbeat-client.ts     # OpenClaw bridge
+│   └── test-*.ts               # Test scripts
 ├── agents/                     # AI personality definitions
-│   ├── architect/              # Builder personality
-│   │   ├── SOUL.md             # Core traits & values
-│   │   └── AGENTS.md           # Behavior rules & tool reference
-│   ├── predator/SOUL.md
-│   ├── hoarder/SOUL.md
-│   └── merchant/
-│       ├── SOUL.md
-│       └── AGENTS.md
+│   ├── survivor/SOUL.md        # Pragmatic survival personality
+│   ├── architect/SOUL.md       # Builder personality
+│   ├── predator/SOUL.md        # Combat personality
+│   ├── hoarder/SOUL.md         # Resource collector
+│   └── merchant/SOUL.md        # Trader personality
 ├── config/
-│   └── game-master.json        # Runtime configuration
+│   └── game-master.json        # Legacy runtime config
 ├── dashboard/                  # Web UI (port 3847)
 │   ├── server.js
 │   └── index.html
-├── docs/
-│   ├── GAME_MASTER.md
-│   └── OPENCLAW_SETUP.md
+├── skills/                     # Shared skill definitions
 └── package.json
 ```
 
 ## MCP Tools
 
-### Perception (8 tools, read-only)
+### Perception (read-only)
 
 | Tool | Description |
 |------|-------------|
-| `get_status` | All-in-one: HP, hunger, position, inventory, time, isBusy |
-| `get_scan` | Nearby players, hostile mobs, ores, trees (directional) |
-| `get_surrounding_blocks` | Block grid or relative direction descriptions |
-| `get_inventory` | Backpack items and counts |
-| `get_health` | HP and hunger values |
-| `get_position` | Current coordinates |
+| `get_status` | HP, hunger, position, inventory, time, isBusy |
+| `get_scan` | Nearby players, mobs, ores, trees (directional) |
+| `get_surrounding_blocks` | Block grid or relative directions |
 | `get_time_of_day` | Day/night status |
-| `get_pending_events` | Queued game events (poll fallback) |
+| `get_pending_events` | Queued game events |
+| `find_blocks` | Find specific blocks nearby |
 
-### Action (7 tools)
+### Action
 
 | Tool | Args | Description |
 |------|------|-------------|
 | `move_to` | `{x, y, z}` | Pathfind to coordinates |
 | `mine` | `{block_type}` or `{x,y,z}` | Dig/chop/mine blocks |
-| `craft` | `{item_name, count?}` | Craft items from inventory |
+| `craft` | `{item_name, count?}` | Craft items |
 | `chat` | `{message}` | Send chat message |
 | `equip` | `{item_name}` | Hold item in hand |
-| `attack` | `{target_name}` | Attack entity until dead |
+| `attack` | `{target_name}` | Attack entity |
 | `eat` | `{food_name?}` | Eat food (auto-select if empty) |
+| `place` | `{block_name, x, y, z}` | Place block at position |
+| `follow_player` | `{player_name, duration?, distance?}` | Follow a player (up to 120s) |
+| `stop_follow` | `{}` | Stop following |
+
+### Social (via Coordinator)
+
+| Tool | Description |
+|------|-------------|
+| `send_chat` | Send targeted/broadcast message to agents |
+| `query_agent_status` | Get another agent's status |
+| `request_trade` | Propose item trade |
+| `accept_trade` / `reject_trade` | Respond to trade |
+| `form_team` | Create a team |
+| `share_skill` | Share learned skill with another agent |
+| `set_waypoint` | Mark a shared location |
 
 ## AI Plan Format
 
@@ -212,33 +257,25 @@ The AI outputs structured JSON plans:
 
 ```json
 {
-  "reflection": "Area is safe, lots of oak trees nearby",
+  "reflection": "Night is coming, need shelter. Player invited me to their base.",
   "plan": [
-    { "tool": "mine", "args": { "block_type": "oak_log" }, "note": "chop trees" },
-    { "tool": "craft", "args": { "item_name": "wooden_planks", "count": 4 }, "note": "make planks" },
-    { "tool": "craft", "args": { "item_name": "wooden_pickaxe" }, "note": "make pickaxe" },
-    { "tool": "mine", "args": { "block_type": "stone" }, "note": "mine stone" },
-    { "tool": "chat", "args": { "message": "Anyone want to trade?" }, "note": "find trades" }
+    { "tool": "chat", "args": { "message": "Thanks! I'll follow you." }, "note": "accept invite" },
+    { "tool": "follow_player", "args": { "player_name": "eamon97", "duration": 60 }, "note": "follow to base" }
   ]
 }
 ```
 
-## HTTP API
+## Agent Personalities
 
-Game Master exposes these endpoints on `http://localhost:3848`:
+Each bot has a unique personality defined in `agents/<type>/SOUL.md`:
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/status` | Bot cognitive state (memory stream size, plan progress, next think) |
-| `GET` | `/heartbeat?bot=Bot_1` | Pull pending prompt (for heartbeat client) |
-| `POST` | `/plan` | Submit AI's JSON plan `{"bot":"Bot_1","plan":"..."}` |
-| `WebSocket` | `ws://localhost:3848?bot=Bot_1` | Real-time prompt push |
-
-## Local Rules (Zero Token)
-
-The bot handles basic survival without AI:
-- **Auto-eat**: Eats best food when hunger < 8
-- **Auto-equip**: Equips best weapon when attacked
+| Type | Style | Priority |
+|------|-------|----------|
+| **survivor** | Pragmatic, cautious | Shelter > tools > resources |
+| **architect** | Creative, planner | Build structures, design layouts |
+| **predator** | Aggressive, hunter | Combat, mob farming, PvP |
+| **hoarder** | Collector, organizer | Gather and stockpile resources |
+| **merchant** | Social, trader | Trade items, negotiate deals |
 
 ## Tests
 
@@ -247,7 +284,13 @@ The bot handles basic survival without AI:
 npm run test:cognitive
 
 # MCP integration test (needs Minecraft)
-npm run test:mcp
+MC_BOT_VERSION=1.21.11 npm run test:mcp
+
+# Movement test
+MC_BOT_VERSION=1.21.11 npm run test:move
+
+# Mining test
+MC_BOT_VERSION=1.21.11 npm run test:mine
 ```
 
 ## Dashboard
@@ -256,6 +299,30 @@ npm run test:mcp
 npm run dashboard
 # Open http://localhost:3847
 ```
+
+Shows real-time status of all connected agents: position, health, current action, inventory.
+
+## Changelog
+
+### v0.2.0 (2026-03-27)
+- **Distributed architecture**: Coordinator + N Bot Runners (1 bot per terminal)
+- **Multi-agent social system**: AgentRegistry, EventBus, TradeEngine, Teams, Waypoints
+- **Three-tier reaction**: Reflex / Habit (TF-IDF) / Deliberation (LLM)
+- **Skill library**: Auto-generate, store, retrieve, and share skills between agents
+- **Social memory**: Per-agent relationship tracking
+- **Critic system**: Post-execution evaluation and reflection
+- **World state builder**: Rich context for LLM prompts
+- **JSON repair**: Auto-fix truncated LLM output
+- **follow_player / stop_follow**: New tools for player following
+- **Improved pillar-up**: Reliable block placement during jumps
+- **5 personality types**: survivor, architect, predator, hoarder, merchant
+- **Embedded LLM**: Ollama → OpenClaw HTTP → OpenClaw CLI fallback chain
+
+### v0.1.0
+- Initial release: Stanford Generative Agents cognitive cycle
+- MCP server with 15 tools
+- Single-process Game Master + Heartbeat Client architecture
+- Basic observation, planning, and execution
 
 ## License
 

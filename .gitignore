@@ -10,6 +10,11 @@ dist/
 # Runtime data
 logs/
 memory/
+skills-db/
+skills/
+
+# OpenClaw workspace
+.openclaw/
 
 # OS files
 .DS_Store

@@ -57,7 +57,9 @@ async function sendViaCli(agent: string, text: string): Promise<string> {
   const workspace = process.env.OPENCLAW_WORKSPACE
     || join(process.env.HOME || process.env.USERPROFILE || '', '.openclaw', 'workspace');
   return new Promise((resolve, reject) => {
-    const child = spawn('npx', ['openclaw', 'agent', '--agent', agent, '--message', '-'], {
+    // 每次用新 session-id 防止上下文污染（AI 会把历史对话当聊天）
+    const sessionId = `mc-${Date.now()}`;
+    const child = spawn('npx', ['openclaw', 'agent', '--agent', agent, '--session-id', sessionId, '--message', '-'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: true,
       cwd: workspace,
@@ -85,8 +87,65 @@ async function sendViaCli(agent: string, text: string): Promise<string> {
   });
 }
 
+/**
+ * 尝试直接调用 Ollama API（绕过 OpenClaw 系统 prompt 干扰）
+ * 使用强制 JSON system prompt
+ */
+async function sendViaOllamaApi(model: string, text: string): Promise<string | null> {
+  const baseUrl = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
+  try {
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        format: 'json',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a Minecraft survival bot. You MUST respond with ONLY a valid JSON object. Format: {"reflection":"...","plan":[{"tool":"mine","args":{"block_type":"oak_log"},"note":"reason"}]}. The only valid tool names are: mine, craft, move_to, equip, attack, eat, chat. Never output anything except JSON.',
+          },
+          { role: 'user', content: text },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[HeartbeatClient] Ollama API HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json() as { message?: { content?: string } };
+    const content = data.message?.content ?? null;
+    if (content) {
+      console.log(`[HeartbeatClient] Ollama API 原始响应 (${content.length} 字符): ${content.slice(0, 200)}`);
+    }
+    return content;
+  } catch (err) {
+    console.warn('[HeartbeatClient] Ollama API 错误:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 /** 发送 prompt 给 OpenClaw，返回 AI 的文本响应 */
 async function sendToOpenClaw(agent: string, text: string): Promise<string> {
+  // 优先使用 Ollama API 直连（绕过 OpenClaw 系统 prompt 干扰，强制 JSON 输出）
+  const ollamaModel = process.env.OLLAMA_MODEL ?? 'minimax-m2.5:cloud';
+  const ollamaResult = await sendViaOllamaApi(ollamaModel, text);
+  if (ollamaResult) {
+    // 尝试从响应中提取 JSON（可能被 markdown 或文本包裹）
+    const trimmed = ollamaResult.trim();
+    let jsonStr = trimmed;
+    if (!trimmed.startsWith('{')) {
+      const match = trimmed.match(/\{[\s\S]*\}/);
+      if (match) jsonStr = match[0];
+    }
+    if (jsonStr.startsWith('{')) {
+      console.log('[HeartbeatClient] Ollama API 直连成功');
+      return jsonStr;
+    }
+    console.warn('[HeartbeatClient] Ollama API 返回非 JSON，回退到 OpenClaw CLI');
+  }
+
   if (OPENCLAW_API_URL) {
     try {
       return await sendViaHttp(agent, text);
@@ -121,7 +180,9 @@ async function submitPlan(baseUrl: string, botName: string, planText: string): P
 
 const lastSendTime = new Map<string, number>();
 const MIN_SEND_INTERVAL_MS: Record<string, number> = {
-  urgent: 0,
+  fast: 0,       // System 1 快思考：立即发送，不限频
+  slow: 0,       // System 2 慢思考：也不限频（每分钟才触发一次）
+  urgent: 0,     // 兼容旧版
   normal: 5000,
   cognitive: 0,
   idle: 20000,

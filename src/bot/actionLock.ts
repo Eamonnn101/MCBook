@@ -2,7 +2,7 @@
  * 动作锁 - 防止 Game Master 心跳与长耗时动作冲突
  * 当 move_to、mine、attack 执行时 isBusy=true，Game Master 可跳过本轮心跳
  */
-export type ActionType = 'move_to' | 'mine' | 'attack' | null;
+export type ActionType = 'move_to' | 'mine' | 'attack' | 'follow_player' | null;
 
 let isBusy = false;
 let currentAction: ActionType = null;

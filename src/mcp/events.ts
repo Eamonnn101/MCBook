@@ -44,6 +44,8 @@ export function registerEventListeners(bot: Bot, onEvent: EventCallback): void {
   });
 
   bot.on('chat', (username: string, message: string) => {
+    // 过滤掉 bot 自己的消息，避免自己触发快思考→自己和自己对话
+    if (username === bot.username) return;
     push({ type: 'chat', username, message });
   });
 
